@@ -22,3 +22,4 @@ run_script() {
 cd $SCRIPT_DIR
 # Generate the disribtuion of metrics
 run_script python3 metricCount.py
+THESIS_PATH=$THESIS_PATH python3 english.py

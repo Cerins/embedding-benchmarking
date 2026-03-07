@@ -1,7 +1,23 @@
 import os
+import sys
+import json
+from collections import defaultdict
+
+import numpy as np
+import pandas as pd
+import mteb
 from datasets import load_dataset_builder
 
 CACHE_DIR = os.environ.get("RESULT_CACHE_DIR")
+
+
+def thesis_file(filename):
+    thesis_path = os.environ.get("THESIS_PATH")
+    if not thesis_path:
+        sys.exit("THESIS_PATH not set")
+    return os.path.join(thesis_path, filename)
+
+
 print("---")
 print(CACHE_DIR)
 print("---")
@@ -13,6 +29,7 @@ MAX_SIZE = 500_000_000  # 500 MB
 
 def get_models():
     models = [
+        "sentence-transformers__all-MiniLM-L12-v2",
         "sentence-transformers__all-MiniLM-L6-v2",
         "BAAI__bge-small-en-v1.5",
         "thenlper__gte-small",
@@ -31,6 +48,7 @@ def get_models():
     ]
     # Restrict models temprorary
     models = [
+        "sentence-transformers__all-MiniLM-L12-v2",
         "sentence-transformers__all-MiniLM-L6-v2",
         "BAAI__bge-small-en-v1.5",
         "thenlper__gte-small",
@@ -44,14 +62,37 @@ def get_models():
     return models
 
 
+_SIZE_CACHE_FILE = os.path.join(os.path.dirname(__file__), "dataset_size_cache.json")
+_size_cache = None
+
+
+def _load_size_cache():
+    global _size_cache
+    if _size_cache is None:
+        if os.path.exists(_SIZE_CACHE_FILE):
+            with open(_SIZE_CACHE_FILE) as f:
+                _size_cache = json.load(f)
+        else:
+            _size_cache = {}
+    return _size_cache
+
+
+def _save_size_cache():
+    with open(_SIZE_CACHE_FILE, "w") as f:
+        json.dump(_size_cache, f, indent=2)
+
+
 def dataset_too_large(task, max_size=MAX_SIZE):
+    path = task.metadata.dataset.get("path", task.metadata.name)
+    revision = task.metadata.dataset.get("revision", None)
+    cache_key = f"{path}@{revision}@{max_size}"
     try:
-        path = task.metadata.dataset["path"]
-        revision = task.metadata.dataset.get("revision", None)
+        cache = _load_size_cache()
+        # cache = {}
+        if cache_key in cache:
+            return cache[cache_key]
         builder = load_dataset_builder(path, "corpus", revision=revision)
         info = builder.info
-        # print("INFO", info)
-        # Added num_bytes to handle grid
         size = 0
         try:
             size = info.download_size or info.dataset_size or 0
@@ -63,9 +104,15 @@ def dataset_too_large(task, max_size=MAX_SIZE):
             except Exception:
                 pass
         print(f"{path}: {size / 1e6:.1f} MB")
-        return size > max_size
+        result = size > max_size
+        cache[cache_key] = result
+        _save_size_cache()
+        return result
     except Exception as e:
         print("Size check failed:", task.metadata.name, e)
+        cache = _load_size_cache()
+        cache[cache_key] = False
+        _save_size_cache()
         return False
 
 
@@ -82,11 +129,11 @@ TARGET_DOMAINS_UNUSED = [
 TARGET_DOMAINS = [
     "legal",
     "medical",
-    # "chemistry",  # These 2 have large overlap with legal
-    # "engineering",
+    "chemistry",
+    # "engineering", # Only 1 item
     "programming",
     "financial",
-    # "fiction", # Not enoguh items to make sense to use
+    "fiction",
 ]
 
 
@@ -136,3 +183,120 @@ def hf_repo_to_mteb(repo_name: str) -> str:
         return repo_name  # already correct
     org, rest = repo_name.split("/", 1)
     return f"{org}__{rest}"
+
+
+def get_scores_dataframe(target_domains=TARGET_DOMAINS):
+    all_tasks = [
+        t
+        for t in mteb.get_tasks(task_types=["Retrieval"], languages=["eng"])
+        if good_task(t) and not dataset_too_large(t)
+    ]
+    results_dir = os.path.join(CACHE_DIR, "remote", "results")
+    if not os.path.exists(results_dir):
+        print(f"Results directory not found: {results_dir}")
+        return None
+    tasks = [t for t in all_tasks if task_has_target_domain(t, target_domains)]
+    print(f"Total tasks with target domains: {len(tasks)}")
+    print(f"Target domains: {target_domains}")
+    task_to_domains = {task.metadata.name: get_task_domains(task) for task in tasks}
+    task_names = set(task_to_domains.keys())
+    print("Tasks by domain:")
+    for domain in target_domains:
+        count = sum(1 for d in task_to_domains.values() if domain in d)
+        print(f"  {domain}: {count} tasks")
+    print("Scanning models...")
+    model_dirs = []
+    for item in os.listdir(results_dir):
+        model_path = os.path.join(results_dir, item)
+        if os.path.isdir(model_path):
+            model_dirs.append((item, model_path))
+    model_task_counts = defaultdict(int)
+    model_scores = defaultdict(dict)
+    for model_name, model_path in model_dirs:
+        for root, dirs, files in os.walk(model_path):
+            for file in files:
+                if file.endswith(".json") and file != "model_meta.json":
+                    task_name = file[:-5]
+                    if task_name in task_names:
+                        json_path = os.path.join(root, file)
+                        try:
+                            with open(json_path, "r") as f:
+                                data = json.load(f)
+                            if (
+                                "scores" in data
+                                and "test" in data["scores"]
+                                and len(data["scores"]["test"]) > 0
+                            ):
+                                test_scores = data["scores"]["test"][0]
+                                if "ndcg_at_10" in test_scores:
+                                    model_task_counts[model_name] += 1
+                                    model_scores[model_name][task_name] = test_scores[
+                                        "ndcg_at_10"
+                                    ]
+                        except (json.JSONDecodeError, KeyError, IOError):
+                            continue
+    qualified_models = get_models()
+    print(f"Total models found: {len(model_dirs)}")
+    print("Qualified models:")
+    for model in sorted(qualified_models):
+        print(f"  {model}: {model_task_counts[model]} tasks")
+    rows = []
+    for task_name in sorted(task_names):
+        row = {"task_name": task_name, "domains": task_to_domains[task_name]}
+        for model in sorted(qualified_models):
+            row[model] = model_scores[model].get(task_name, np.nan)
+        rows.append(row)
+    df = pd.DataFrame(rows)
+    columns = ["task_name", "domains"] + sorted(qualified_models)
+    return df[columns]
+
+
+def get_benchmark_dataframe(target_domains=TARGET_DOMAINS):
+    cache = mteb.ResultCache(CACHE_DIR)
+    # cache.download_from_remote()
+    all_tasks = [
+        t
+        for t in mteb.get_tasks(task_types=["Retrieval"], languages=["eng"])
+        if good_task(t)
+    ]
+    tasks = [t for t in all_tasks if task_has_target_domain(t, target_domains)]
+    task_to_domains = {task.metadata.name: get_task_domains(task) for task in tasks}
+    task_names = set(task_to_domains.keys())
+    results_dir = os.path.join(CACHE_DIR, "remote", "results")
+    model_task_counts = defaultdict(int)
+    model_scores = defaultdict(dict)
+    print(os.path.realpath(results_dir))
+    for model in os.listdir(results_dir):
+        model_path = os.path.join(results_dir, model)
+        if not os.path.isdir(model_path):
+            continue
+        for root, dirs, files in os.walk(model_path):
+            for file in files:
+                if file.endswith(".json") and file != "model_meta.json":
+                    task = file[:-5]
+                    if task not in task_names:
+                        continue
+                    path = os.path.join(root, file)
+                    try:
+                        with open(path) as f:
+                            data = json.load(f)
+                        if "scores" in data:
+                            model_task_counts[model] += 1
+                            model_scores[model][task] = True
+                    except:
+                        pass
+    qualified_models = get_models()
+    rows = []
+    for task in sorted(task_names):
+        row = {"task_name": task, "domains": task_to_domains[task]}
+        non_nan_found = False
+        for model in qualified_models:
+            val = model_scores[model].get(task, np.nan)
+            if not np.isnan(val):
+                non_nan_found = True
+            row[model] = val
+        if non_nan_found:
+            rows.append(row)
+    df = pd.DataFrame(rows)
+    columns = ["task_name", "domains"] + qualified_models
+    return df[columns]

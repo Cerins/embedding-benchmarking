@@ -1,8 +1,7 @@
 import mteb
 from collections import Counter
 import matplotlib.pyplot as plt
-import sys
-import os
+from common.utils import thesis_file
 
 
 def good_task(t):
@@ -50,11 +49,7 @@ def suggested_metrics_histogram(tasks):
     )
 
     plt.tight_layout()
-    thesis_path = os.environ.get("THESIS_PATH")
-    if not thesis_path:
-        sys.exit("Error: THESIS_PATH environment variable is not set.")
-    os.chdir(thesis_path)
-    plt.savefig("metrics_histogram.png", dpi=300, bbox_inches="tight")
+    plt.savefig(thesis_file("metrics_histogram.png"), dpi=300, bbox_inches="tight")
     plt.close()
     print("\nSaved metric histogram")
 

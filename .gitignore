@@ -1,0 +1,7 @@
+.env
+cache
+__pycache__
+
+# Experiments not sharable
+comparing
+datasets

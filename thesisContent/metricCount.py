@@ -1,51 +1,62 @@
 import mteb
 from collections import Counter
 import matplotlib.pyplot as plt
+import sys
+import os
 
 
 def good_task(t):
-    if t.metadata.category != "t2t":
-        return False
-    return True
+    return t.metadata.category == "t2t"
 
 
 def suggested_metrics_histogram(tasks):
-    all_metrics = []
-    for task in tasks:
-        if hasattr(task.metadata, "main_score"):
-            metrics = task.metadata.main_score
-            all_metrics.append(task.metadata.main_score)
+    # Collect main_score metrics
+    metrics = [
+        t.metadata.main_score for t in tasks if hasattr(t.metadata, "main_score")
+    ]
+    counts = Counter(metrics)
+    # Separate metrics with count > 1 and <= 1
+    filtered_counts = {}
+    other_count = 0
+    for metric, count in counts.items():
+        if count <= 1:
+            other_count += count
         else:
-            raise Exception("Not possible")
-
-    counts = Counter(all_metrics)
-    total = sum(counts.values())
-    labels, values = zip(*counts.most_common())
+            filtered_counts[metric] = count
+    if other_count > 0:
+        filtered_counts["Cits"] = other_count  # Latvian label
+    total = sum(filtered_counts.values())
+    # Sort by frequency (descending)
+    sorted_data = sorted(filtered_counts.items(), key=lambda x: x[1], reverse=True)
+    labels, values = zip(*sorted_data)
     percentages = [(v / total) * 100 for v in values]
-    # Plot
-    plt.figure(figsize=(14, 8))
-    bars = plt.bar(range(len(labels)), values)
-    plt.xticks(range(len(labels)), labels, rotation=45, ha="right")
-    plt.xlabel("Metrika")
-    plt.ylabel("Skaits")
-    plt.title("MTEB datukopu ieteiktās metrikas")
-    plt.grid(axis="y", alpha=0.3)
-    # Add labels: count + percentage
-    for i, bar in enumerate(bars):
-        height = bar.get_height()
-        label = f"{values[i]}\n({percentages[i]:.1f}%)"
-        plt.text(
-            bar.get_x() + bar.get_width() / 2,
-            height,
-            label,
-            ha="center",
-            va="bottom",
-            fontsize=9,
-        )
+    # Create Latvian legend labels
+    legend_labels = [
+        f"{label}: {value} ({pct:.1f}%)"
+        for label, value, pct in zip(labels, values, percentages)
+    ]
+    # Create figure
+    fig, ax = plt.subplots(figsize=(12, 8))
+    # Draw pie
+    wedges, _ = ax.pie(values, startangle=140)
+    # ax.set_title("MTEB datukopu ieteiktās metrikas")
+    # Add legend with matching colors
+    ax.legend(
+        wedges,
+        legend_labels,
+        title="Metrikas",
+        loc="center left",
+        bbox_to_anchor=(1, 0.5),
+    )
+
     plt.tight_layout()
-    plt.savefig("metrics_histogram.png", dpi=300)
-    print("\nSaved metric histogram")
+    thesis_path = os.environ.get("THESIS_PATH")
+    if not thesis_path:
+        sys.exit("Error: THESIS_PATH environment variable is not set.")
+    os.chdir(thesis_path)
+    plt.savefig("metrics_histogram.png", dpi=300, bbox_inches="tight")
     plt.close()
+    print("\nSaved metric histogram")
 
 
 def main():

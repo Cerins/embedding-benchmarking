@@ -11,72 +11,19 @@ import os
 import json
 import sys
 from upsetplot import UpSet, from_indicators
+from common.utils import *
 
-
-CACHE_DIR = "./cache"
-
-TARGET_DOMAINS_UNUSED = [
-    "legal",
-    "medical",
-    "chemistry",
-    "engineering",
-    "programming",
-    "financial",
-    "fiction",
+all_tasks = [
+    t
+    for t in mteb.get_tasks(task_types=["Retrieval"], languages=["eng"])
+    if good_task(t) and not dataset_too_large(t)
 ]
-
-TARGET_DOMAINS = [
-    "legal",
-    "medical",
-    # "chemistry",  # These 2 have large overlap with legal
-    # "engineering",
-    "programming",
-    "financial",
-    # "fiction", # Not enoguh items to make sense to use
-]
-
-
-def good_task(t):
-    # Only allow t2t
-    if t.metadata.category != "t2t":
-        return False
-    # Find if there exists language that is 3 letters long and not eng
-    for lang in t.metadata.languages:
-        if len(lang) == 3 and lang != "eng":
-            return False
-    return True
-
-
-def get_task_domains(task):
-    if not hasattr(task.metadata, "domains") or not task.metadata.domains:
-        return []
-    domains = []
-    for domain in task.metadata.domains:
-        dl = domain.lower()
-        # Basically only show the interesting domains
-        # if dl in TARGET_DOMAINS_UNUSED:
-        domains.append(dl)
-    return domains
-
-
-def task_has_target_domain(task, target_domains):
-    domains = get_task_domains(task)
-    for td in target_domains:
-        print(td, target_domains, domains)
-        if td in domains:
-            return True
-    return False
 
 
 def get_benchmark_dataframe(min_tasks=35, target_domains=TARGET_DOMAINS):
     cache = mteb.ResultCache(CACHE_DIR)
-    cache.download_from_remote()
+    # cache.download_from_remote()
     # Load and filter tasks
-    all_tasks = [
-        t
-        for t in mteb.get_tasks(task_types=["Retrieval"], languages=["eng"])
-        if good_task(t)
-    ]
     # Filter to only tasks with TARGET_DOMAINS
     tasks = [t for t in all_tasks if task_has_target_domain(t, target_domains)]
     print(f"Total tasks with target domains: {len(tasks)}")
@@ -128,9 +75,7 @@ def get_benchmark_dataframe(min_tasks=35, target_domains=TARGET_DOMAINS):
                         except (json.JSONDecodeError, KeyError, IOError):
                             continue
     # Filter models with at least min_tasks
-    qualified_models = [
-        model for model, count in model_task_counts.items() if count >= min_tasks
-    ]
+    qualified_models = get_models()
     print(f"Total models found: {len(model_dirs)}")
     print(f"Models with >= {min_tasks} tasks: {len(qualified_models)}")
     if not qualified_models:
@@ -205,7 +150,7 @@ def vizualize_domain_overlaps(df, target_domains, fn):
     )
     subplots = up.plot()
     subplots["intersections"].set_ylabel("Pārklājuma izmērs")
-    plt.suptitle("Domēnu pārklājums (UpSet diagramma)")
+    # plt.suptitle("Domēnu pārklājums (UpSet diagramma)")
     plt.savefig(fn, dpi=300, bbox_inches="tight")
     plt.close()
     print(f"Visualization saved to '{fn}'")

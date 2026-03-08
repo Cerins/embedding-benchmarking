@@ -185,6 +185,10 @@ def hf_repo_to_mteb(repo_name: str) -> str:
     return f"{org}__{rest}"
 
 
+def model_short_name(model_name: str) -> str:
+    return model_name.split("__")[-1]
+
+
 def get_scores_dataframe(target_domains=TARGET_DOMAINS):
     all_tasks = [
         t

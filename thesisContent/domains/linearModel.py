@@ -26,7 +26,7 @@ def build_long_df(df):
         lambda d: next(x for x in d if x in TARGET_DOMAINS)
     )
     # Make the model graphs more readable
-    long["model_short"] = long["model"].apply(lambda m: m.split("__")[-1])
+    long["model_short"] = long["model"].apply(model_short_name)
     return long
 
 
@@ -63,6 +63,80 @@ def plot_interaction_effects(long, fn):
     plt.savefig(fn, dpi=300, bbox_inches="tight")
     plt.close()
     print(f"Interaction effects plot saved to '{fn}'")
+
+
+def plot_boxplot_models(long, fn):
+    models = long.groupby("model_short")["score"].mean().sort_values().index.tolist()
+    data = [long.loc[long["model_short"] == m, "score"].dropna().values for m in models]
+    fig, ax = plt.subplots(figsize=(8, max(4, 0.5 * len(models))))
+    ax.boxplot(data, vert=False, patch_artist=True)
+    ax.set_yticks(range(1, len(models) + 1))
+    ax.set_yticklabels(models)
+    ax.set_xlabel("nDCG@10")
+    plt.tight_layout()
+    plt.savefig(fn, dpi=300, bbox_inches="tight")
+    plt.close()
+    print(f"Model box plot saved to '{fn}'")
+
+
+def plot_boxplot_domains(long, fn):
+    domains = long.groupby("domain")["score"].mean().sort_values().index.tolist()
+    data = [long.loc[long["domain"] == d, "score"].dropna().values for d in domains]
+    fig, ax = plt.subplots(figsize=(8, max(4, 0.5 * len(domains))))
+    ax.boxplot(data, vert=False, patch_artist=True)
+    ax.set_yticks(range(1, len(domains) + 1))
+    ax.set_yticklabels(domains)
+    ax.set_xlabel("nDCG@10")
+    plt.tight_layout()
+    plt.savefig(fn, dpi=300, bbox_inches="tight")
+    plt.close()
+    print(f"Domain box plot saved to '{fn}'")
+
+
+def _render_task_interaction(pivot_centered, pivot, ax):
+    im = ax.imshow(pivot_centered.values, aspect="auto", cmap="RdYlGn")
+    ax.set_xticks(range(len(pivot_centered.columns)))
+    ax.set_xticklabels(pivot_centered.columns, rotation=30, ha="right")
+    ax.set_yticks(range(len(pivot_centered.index)))
+    ax.set_yticklabels(pivot_centered.index)
+    plt.colorbar(im, ax=ax, label="nDCG@10 (novirze no modeļa vidējā)")
+    for i in range(len(pivot_centered.index)):
+        for j in range(len(pivot_centered.columns)):
+            val = pivot_centered.values[i, j]
+            abs_val = pivot.values[i, j]
+            if not np.isnan(val):
+                ax.text(j, i, f"{val:+.3f}\n({abs_val:.3f})", ha="center", va="center", fontsize=6)
+
+
+def plot_interaction_effects_tasks(long, fn_prefix):
+    # Build task labels: "task_name (domain)", sorted by domain then task name
+    task_domain = long[["task_name", "domain"]].drop_duplicates().sort_values(["domain", "task_name"])
+    ordered_tasks = task_domain["task_name"].tolist()
+    task_labels = [f"{r.task_name} ({r.domain})" for r in task_domain.itertuples()]
+
+    # Models sorted by mean performance (best last = top of y-axis equivalent on x)
+    model_order = long.groupby("model_short")["score"].mean().sort_values().index.tolist()
+
+    pivot = long.groupby(["task_name", "model_short"])["score"].mean().unstack()
+    pivot = pivot.loc[ordered_tasks, model_order]
+    pivot.index = task_labels
+    pivot_centered = pivot.sub(pivot.mean(axis=0), axis=1)
+
+    mid = len(ordered_tasks) // 2
+    for part, (pc_part, pv_part, suffix) in enumerate(
+        [
+            (pivot_centered.iloc[:mid], pivot.iloc[:mid], "1"),
+            (pivot_centered.iloc[mid:], pivot.iloc[mid:], "2"),
+        ]
+    ):
+        n_tasks = len(pc_part)
+        fig, ax = plt.subplots(figsize=(max(8, 0.9 * len(model_order)), max(4, 0.45 * n_tasks)))
+        _render_task_interaction(pc_part, pv_part, ax)
+        plt.tight_layout()
+        fn = f"{fn_prefix}_{suffix}.png"
+        plt.savefig(fn, dpi=300, bbox_inches="tight")
+        plt.close()
+        print(f"Task interaction effects plot saved to '{fn}'")
 
 
 def plot_anova_variance(anova_table, fn):
@@ -106,7 +180,10 @@ def main():
     # Save ANOVA table as CSV for reference
     anova_table.to_csv(thesis_file("domain_lm_anova.csv"))
     plot_interaction_effects(long, thesis_file("domain_lm_interaction_effects.png"))
+    plot_interaction_effects_tasks(long, thesis_file("domain_lm_interaction_effects_tasks"))
     plot_anova_variance(anova_table, thesis_file("domain_lm_anova_variance.png"))
+    plot_boxplot_models(long, thesis_file("domain_lm_boxplot_models.png"))
+    plot_boxplot_domains(long, thesis_file("domain_lm_boxplot_domains.png"))
 
 
 if __name__ == "__main__":

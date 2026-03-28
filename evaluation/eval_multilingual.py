@@ -6,17 +6,16 @@ from evaluation.eval_common import run_single_task, already_processed, RESULTS_D
 
 POST_PROCESS_SLEEP_SECONDS = 2
 
-
 if __name__ == "__main__":
     mp.set_start_method("spawn", force=True)
     all_tasks = [
         t
-        for t in mteb.get_tasks(task_types=["Retrieval"], languages=["eng"])
-        if good_task(t)
+        for t in mteb.get_tasks(task_types=["Retrieval"])
+        if good_multilingual_task(t)
     ]
     tasks = [t for t in all_tasks if task_has_target_domain(t, TARGET_DOMAINS)]
     cache = mteb.ResultCache(CACHE_DIR)
-    models = get_models()
+    models = get_multilingual_models()
 
     for m in models:
         model_hf_repo = mteb_to_hf_repo(m)
@@ -27,7 +26,7 @@ if __name__ == "__main__":
         missing_tasks = [t for t in tasks if t.metadata.name not in existing_task_names]
 
         for i, task in enumerate(missing_tasks):
-            if dataset_too_large(task):
+            if dataset_too_large_multi(task):
                 print("Skipping too large:", task.metadata.name)
                 continue
             if already_processed(m, task):

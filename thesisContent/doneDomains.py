@@ -138,10 +138,18 @@ def save_stats(df, output_file):
 
 def main():
     print("Loading benchmark...")
-    df = get_benchmark_dataframe()
-    visualize_grid(df, "model_dataset_done.png")
-    stats = save_stats(df, "model_dataset_stats.json")
-    print(stats)
+    df_e_p = get_benchmark_dataframe(TARGET_DOMAINS, get_models)
+    df_e_f = get_benchmark_dataframe(TARGET_DOMAINS, get_multilingual_models)
+    df_m_p = get_benchmark_dataframe(TARGET_DOMAINS, get_models, True)
+    df_m_f = get_benchmark_dataframe(TARGET_DOMAINS, get_multilingual_models, True)
+    visualize_grid(df_e_p, "model_dataset_done.png")
+    save_stats(df_e_p, "model_dataset_stats.json")
+    visualize_grid(df_e_f, "model_dataset_done_full.png")
+    save_stats(df_e_f, "model_dataset_stats_full.json")
+    visualize_grid(df_m_f, "model_multilingual_dataset_done_full.png")
+    save_stats(df_m_f, "model_multilingual_dataset_stats_full.json")
+    visualize_grid(df_m_p, "model_multilingual_dataset_done.png")
+    save_stats(df_m_p, "model_multilingual_dataset_stats.json")
 
 
 if __name__ == "__main__":

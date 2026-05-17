@@ -26,6 +26,7 @@ python3 -m analysis.metrics
 python3 -m analysis.domains.chosen
 python3 -m analysis.domains.done
 python3 -m analysis.domains.anova
+python3 -m analysis.domains.domain
 python3 -m analysis.domains.paramCorrelation
 python3 -m analysis.domains.modelRankingTable
 python3 -m analysis.domains.taskSpecializationGain

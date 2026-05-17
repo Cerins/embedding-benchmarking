@@ -2,15 +2,23 @@ import os
 import sys
 import json
 from collections import defaultdict
-
+from enum import Enum
 import numpy as np
 import pandas as pd
 import mteb
 from datasets import load_dataset_builder
 
+
+class ScoreSource(Enum):
+    CACHE = "cache"
+    COMPUTED = "computed"
+
+
+# The cache dir for mteb
 CACHE_DIR = os.environ.get("RESULT_CACHE_DIR")
 
 
+# Full filepath for a thesis file
 def thesis_file(filename):
     thesis_path = os.environ.get("THESIS_PATH")
     if not thesis_path:
@@ -18,183 +26,75 @@ def thesis_file(filename):
     return os.path.join(thesis_path, filename)
 
 
-print("---")
-print(CACHE_DIR)
-print("---")
-# MAX_SIZE = 1_000_000_000  # 1 GB
+# Max domain dataset
 MAX_SIZE = 500_000_000  # 500 MB
-# Tmp only small datasets
-# MAX_SIZE = 10_000_000  # 10 MB
 
 
-def get_english_models():
-    models = [
-        "sentence-transformers__all-MiniLM-L12-v2",
-        "sentence-transformers__all-MiniLM-L6-v2",
-        "BAAI__bge-small-en-v1.5",
-        "thenlper__gte-small",
-        "Snowflake__snowflake-arctic-embed-xs",
-        "sentence-transformers__all-mpnet-base-v2",
-        "BAAI__bge-base-en-v1.5",
-        "thenlper__gte-base",
-        "Snowflake__snowflake-arctic-embed-m",
-        "BAAI__bge-large-en-v1.5",
-    ]
-    return models
-
-
+# Models used for the domains analysis
 def get_models():
-    models = get_english_models()
-    # Add multilingual which i can run
-    # Switch order back later TODO
     models = [
-        "intfloat__multilingual-e5-base",
-        "intfloat__multilingual-e5-small",
-        "sentence-transformers__paraphrase-multilingual-mpnet-base-v2",
-    ] + models
-    return models
-
-
-def get_english_full_models():
-    models = get_english_models()
-    models = models + [
-        "jinaai__jina-embeddings-v2-base-en",  # Weird architecture
-        "Snowflake__snowflake-arctic-embed-l",  # Size constraint was the limting factor
-        "NovaSearch__stella_en_400M_v5",
-        "Qwen__Qwen3-Embedding-0.6B",
-        "Alibaba-NLP__gte-Qwen2-1.5B-instruct",
-        "nvidia__NV-Embed-v2",
-        "intfloat__e5-large-v2",
-        "intfloat__e5-base-v2",
-        "intfloat__e5-mistral-7b-instruct",
-        "mixedbread-ai__mxbai-embed-large-v1",
-        "jinaai__jina-embeddings-v4",
-        "jinaai__jina-embeddings-v3",  # Closed source next ones
-        "openai__text-embedding-3-large",
-        "openai__text-embedding-3-small",
-        # "voyageai__voyage-4",
-        # "voyageai__voyage-3.5",
-        # "voyageai__voyage-large-2",
-        "google__text-embedding-005",
-        "ibm-granite__granite-embedding-english-r2",
+        "sentence-transformers__all-MiniLM-L6-v2",  # 0.023B
+        "BAAI__bge-small-en-v1.5",  # 0.033B
+        "ibm-granite__granite-embedding-small-english-r2",  # 0.048B
+        "sentence-transformers__all-mpnet-base-v2",  # 0.109B
+        "BAAI__bge-base-en-v1.5",  # 0.109B
+        "intfloat__multilingual-e5-small",  # 0.118B
+        "Alibaba-NLP__gte-base-en-v1.5",  # 0.137B
+        "ibm-granite__granite-embedding-english-r2",  # 0.149B
+        "jinaai__jina-embeddings-v5-text-nano",  # 0.212B
+        "sentence-transformers__paraphrase-multilingual-mpnet-base-v2",  # 0.278B
+        "Alibaba-NLP__gte-multilingual-base",  # 0.305B
+        "mixedbread-ai__mxbai-embed-large-v1",  # 0.335B
+        "BAAI__bge-large-en-v1.5",  # 0.335B
+        "WhereIsAI__UAE-Large-V1",  # 0.335B
+        "intfloat__multilingual-e5-large-instruct",  # 0.560B
+        "Snowflake__snowflake-arctic-embed-l-v2.0",  # 0.568B
+        "jinaai__jina-embeddings-v5-text-small",  # 0.596B
     ]
     return models
 
 
+# Some models for debugging
+def get_debug_models():
+    models = [
+        "sentence-transformers__all-MiniLM-L6-v2",  # 0.023B
+        "sentence-transformers__all-mpnet-base-v2",  # 0.109B
+    ]
+    return models
+
+
+# Models used for lv task analysis
+def get_latvian_models():
+    return get_models() + ["lv-mbert-embed-base"]
+
+
+# AILab models
+def get_ailab_models():
+    models = [
+        "AiLab-IMCS-UL__lv-mbert-mini",
+        "AiLab-IMCS-UL__lv-deberta-base",
+        "AiLab-IMCS-UL__lv-mbert-base",
+        "AiLab-IMCS-UL__lv-mbert-large",
+    ]
+    return models
+
+
+# Models used for multilingual analysis
 def get_multilingual_models():
-    # Base sources
-    models = get_models() + get_english_models() + get_english_full_models()
-
-    # Add strong multilingual-specific models
-    multilingual_extra = [
-        "Alibaba-NLP__gte-multilingual-base",
-        "nomic-ai__nomic-embed-text-v1.5",  # Weird stuff
-        "intfloat__multilingual-e5-large",  # stronger than base/small
-        "BAAI__bge-m3",  # Multlingual but too large
-        "Cohere__Cohere-embed-multilingual-v3.0",
-        # "voyageai__voyage-multilingual-2",
-        # "google__text-multilingual-embedding-002",
+    models = [
+        "sentence-transformers__all-MiniLM-L6-v2",  # 0.023B
+        "BAAI__bge-small-en-v1.5",  # 0.033B
+        "sentence-transformers__all-mpnet-base-v2",  # 0.109B
+        "BAAI__bge-base-en-v1.5",  # 0.109B
+        "intfloat__multilingual-e5-small",  # 0.118B
+        "sentence-transformers__paraphrase-multilingual-mpnet-base-v2",  # 0.278B
+        "mixedbread-ai__mxbai-embed-large-v1",  # 0.335B
+        "BAAI__bge-large-en-v1.5",  # 0.335B
+        "WhereIsAI__UAE-Large-V1",  # 0.335B
+        "intfloat__multilingual-e5-large-instruct",  # 0.560B
+        "Snowflake__snowflake-arctic-embed-l-v2.0",  # 0.568B
     ]
-
-    models += multilingual_extra
-
-    # Deduplicate while preserving order
-    seen = set()
-    unique_models = []
-    for m in models:
-        if m not in seen:
-            seen.add(m)
-            unique_models.append(m)
-
-    return unique_models
-
-
-_SIZE_CACHE_FILE = os.path.join(os.path.dirname(__file__), "dataset_size_cache.json")
-_size_cache = None
-
-
-def _load_size_cache():
-    global _size_cache
-    if _size_cache is None:
-        if os.path.exists(_SIZE_CACHE_FILE):
-            with open(_SIZE_CACHE_FILE) as f:
-                _size_cache = json.load(f)
-        else:
-            _size_cache = {}
-    return _size_cache
-
-
-def _save_size_cache():
-    with open(_SIZE_CACHE_FILE, "w") as f:
-        json.dump(_size_cache, f, indent=2)
-
-
-def dataset_too_large(task, max_size=MAX_SIZE):
-    path = task.metadata.dataset.get("path", task.metadata.name)
-    revision = task.metadata.dataset.get("revision", None)
-    cache_key = f"{path}@{revision}@{max_size}"
-    try:
-        cache = _load_size_cache()
-        # cache = {}
-        if cache_key in cache:
-            return cache[cache_key]
-        builder = load_dataset_builder(path, "corpus", revision=revision)
-        info = builder.info
-        size = 0
-        try:
-            size = info.download_size or info.dataset_size or 0
-        except Exception:
-            pass
-        if size == 0:
-            try:
-                size = sum(split.num_bytes for split in info.splits.values()) or 0
-            except Exception:
-                pass
-        print(f"{path}: {size / 1e6:.1f} MB")
-        result = size > max_size
-        cache[cache_key] = result
-        # _save_size_cache()
-        return result
-    except Exception as e:
-        print("Size check failed:", task.metadata.name, e)
-        cache = _load_size_cache()
-        cache[cache_key] = False
-        # _save_size_cache()
-        return False
-
-
-def dataset_too_large_multi(task, max_size=MAX_SIZE):
-    path = task.metadata.dataset.get("path", task.metadata.name)
-    revision = task.metadata.dataset.get("revision", None)
-    cache_key = f"{path}@{revision}@{max_size}"
-    try:
-        cache = _load_size_cache()
-        # cache = {}
-        if cache_key in cache:
-            return cache[cache_key]
-        builder = load_dataset_builder(path, "corpus", revision=revision)
-        info = builder.info
-        size = 0
-        try:
-            size = info.download_size or info.dataset_size or 0
-        except Exception:
-            pass
-        if size == 0:
-            try:
-                size = sum(split.num_bytes for split in info.splits.values()) or 0
-            except Exception:
-                pass
-        print(f"{path}: {size / 1e6:.1f} MB")
-        result = size > max_size
-        cache[cache_key] = result
-        # _save_size_cache()
-        return result
-    except Exception as e:
-        print("Size check failed:", task.metadata.name, e)
-        cache = _load_size_cache()
-        cache[cache_key] = False
-        # _save_size_cache()
-        return True
+    return models
 
 
 TARGET_DOMAINS_UNUSED = [
@@ -218,6 +118,7 @@ TARGET_DOMAINS = [
 ]
 
 
+# The good task for domain analydsis
 def good_task(t):
     # Only allow t2t
     if t.metadata.category != "t2t":
@@ -303,126 +204,243 @@ def hf_repo_to_mteb(repo_name: str) -> str:
     return f"{org}__{rest}"
 
 
+def latex_escape(s: str) -> str:
+    return (
+        s.replace("_", r"\_")
+        .replace("&", r"\&")
+        .replace("%", r"\%")
+        .replace("#", r"\#")
+    )
+
+
 def model_short_name(model_name: str) -> str:
+    if "/" in model_name:
+        return model_name.split("/")[-1]
     return model_name.split("__")[-1]
 
 
-def get_scores_dataframe(target_domains=TARGET_DOMAINS):
-    all_tasks = [
-        t
-        for t in mteb.get_tasks(task_types=["Retrieval"], languages=["eng"])
-        if good_task(t) and not dataset_too_large(t)
-    ]
-    results_dir = os.path.join(CACHE_DIR, "remote", "results")
-    if not os.path.exists(results_dir):
-        print(f"Results directory not found: {results_dir}")
+_TASK_ENG_NAMES_FILE = os.path.join(os.path.dirname(__file__), "task_eng_names.json")
+_TASK_MULTI_NAMES_FILE = os.path.join(
+    os.path.dirname(__file__), "task_multi_names.json"
+)
+
+
+def get_eng_tasks(domain_filter=False) -> list:
+    with open(_TASK_ENG_NAMES_FILE) as f:
+        names = json.load(f)
+    tasks = mteb.get_tasks(tasks=names)
+    if domain_filter:
+        tasks = [
+            t for t in tasks if any(d in get_task_domains(t) for d in TARGET_DOMAINS)
+        ]
+    return tasks
+
+
+def get_multilingual_tasks() -> list:
+    with open(_TASK_MULTI_NAMES_FILE) as f:
+        names = json.load(f)
+    return mteb.get_tasks(tasks=names)
+
+
+# A method to extract the score, currently only assumes that score is under test
+def _extract_ndcg_at_10(data, source):
+    test = data.get("scores", {}).get("test", [])
+    if test and "ndcg_at_10" in test[0]:
+        return test[0]["ndcg_at_10"]
+    return None
+
+
+# Extract the way that score was gotten
+def _extract_source(data, source):
+    if _extract_ndcg_at_10(data, source) is None:
         return None
-    tasks = [t for t in all_tasks if task_has_target_domain(t, target_domains)]
-    print(f"Total tasks with target domains: {len(tasks)}")
-    print(f"Target domains: {target_domains}")
-    task_to_domains = {task.metadata.name: get_task_domains(task) for task in tasks}
-    task_names = set(task_to_domains.keys())
-    print("Tasks by domain:")
-    for domain in target_domains:
-        count = sum(1 for d in task_to_domains.values() if domain in d)
-        print(f"  {domain}: {count} tasks")
-    print("Scanning models...")
-    model_dirs = []
-    for item in os.listdir(results_dir):
-        model_path = os.path.join(results_dir, item)
-        if os.path.isdir(model_path):
-            model_dirs.append((item, model_path))
-    model_task_counts = defaultdict(int)
-    model_scores = defaultdict(dict)
-    for model_name, model_path in model_dirs:
-        for root, dirs, files in os.walk(model_path):
-            for file in files:
-                if file.endswith(".json") and file != "model_meta.json":
-                    task_name = file[:-5]
-                    if task_name in task_names:
-                        json_path = os.path.join(root, file)
-                        try:
-                            with open(json_path, "r") as f:
-                                data = json.load(f)
-                            if (
-                                "scores" in data
-                                and "test" in data["scores"]
-                                and len(data["scores"]["test"]) > 0
-                            ):
-                                test_scores = data["scores"]["test"][0]
-                                if "ndcg_at_10" in test_scores:
-                                    model_task_counts[model_name] += 1
-                                    model_scores[model_name][task_name] = test_scores[
-                                        "ndcg_at_10"
-                                    ]
-                        except (json.JSONDecodeError, KeyError, IOError):
-                            continue
-    qualified_models = get_models()
-    print(f"Total models found: {len(model_dirs)}")
-    print("Qualified models:")
-    for model in sorted(qualified_models):
-        print(f"  {model}: {model_task_counts[model]} tasks")
-    rows = []
-    for task_name in sorted(task_names):
-        row = {"task_name": task_name, "domains": task_to_domains[task_name]}
-        for model in sorted(qualified_models):
-            row[model] = model_scores[model].get(task_name, np.nan)
-        rows.append(row)
-    df = pd.DataFrame(rows)
-    columns = ["task_name", "domains"] + sorted(qualified_models)
-    return df[columns]
+    return source
 
 
-def get_benchmark_dataframe(
-    target_domains=TARGET_DOMAINS, gm=get_models, multilingual=False
-):
-    cache = mteb.ResultCache(CACHE_DIR)
-    # cache.download_from_remote()
-    task_checker = good_multilingual_task if multilingual else good_task
-    task_languges = None if multilingual else ["eng"]
-    all_tasks = [
-        t
-        for t in mteb.get_tasks(task_types=["Retrieval"], languages=task_languges)
-        if task_checker(t)
-    ]
-    tasks = [t for t in all_tasks if task_has_target_domain(t, target_domains)]
-    task_to_domains = {task.metadata.name: get_task_domains(task) for task in tasks}
-    task_names = set(task_to_domains.keys())
-    results_dir = os.path.join(CACHE_DIR, "remote", "results")
-    model_task_counts = defaultdict(int)
-    model_scores = defaultdict(dict)
-    print(os.path.realpath(results_dir))
-    for model in os.listdir(results_dir):
-        model_path = os.path.join(results_dir, model)
+# Walks a results dir and populates model_scores
+# It overwrites, so you can go from lowest priorty
+def _scan_scores_dir(directory, task_names, score_extractor, model_scores, source):
+    if not os.path.isdir(directory):
+        return 0
+    found_models = 0
+    for model_name in os.listdir(directory):
+        model_path = os.path.join(directory, model_name)
         if not os.path.isdir(model_path):
             continue
-        for root, dirs, files in os.walk(model_path):
+        found_models += 1
+        for root, _, files in os.walk(model_path):
             for file in files:
-                if file.endswith(".json") and file != "model_meta.json":
-                    task = file[:-5]
-                    if task not in task_names:
-                        continue
-                    path = os.path.join(root, file)
-                    try:
-                        with open(path) as f:
-                            data = json.load(f)
-                        if "scores" in data:
-                            model_task_counts[model] += 1
-                            model_scores[model][task] = True
-                    except:
-                        pass
-    qualified_models = gm()
+                if not file.endswith(".json") or file == "model_meta.json":
+                    continue
+                task_name = file[:-5]
+                if task_name not in task_names:
+                    continue
+                try:
+                    with open(os.path.join(root, file)) as f:
+                        data = json.load(f)
+                    score = score_extractor(data, source)
+                except (json.JSONDecodeError, KeyError, IOError):
+                    continue
+                if score is None:
+                    continue
+                model_scores[model_name][task_name] = score
+    return found_models
+
+
+def _build_scores_df(
+    tasks,
+    qualified_models,
+    score_extractor,
+    extra_columns=None,
+    drop_empty_rows=False,
+    sort_models=False,
+    verbose=False,
+):
+    # Where the mteb remote cache lives (e.g. CQADupstackWordpressRetrieval)
+    results_dir = os.path.join(CACHE_DIR, "remote", "results")
+    # Where locally-computed results are stored (priority over remote)
+    computed_dir = os.path.join(os.path.dirname(__file__), "..", "computed")
+    if not os.path.exists(results_dir):
+        print(f"Results directory not found: {results_dir}")
+    if not os.path.exists(computed_dir):
+        print(f"Computed directory not found: {computed_dir}")
+    if not os.path.exists(results_dir) and not os.path.exists(computed_dir):
+        return None
+    # Task to domains map
+    task_to_domains = {task.metadata.name: get_task_domains(task) for task in tasks}
+    # All the task names
+    task_names = set(task_to_domains.keys())
+    if verbose:
+        print(f"Total tasks: {len(tasks)}")
+        print("Scanning models...")
+    # Store scores
+    model_scores = defaultdict(dict)
+    # Scan remote results first, then computed so computed overrides on conflict.
+    _scan_scores_dir(
+        results_dir, task_names, score_extractor, model_scores, ScoreSource.CACHE
+    )
+    _scan_scores_dir(
+        computed_dir, task_names, score_extractor, model_scores, ScoreSource.COMPUTED
+    )
+    # Calcualte how many tasks per model were done
+    model_task_counts = {model: len(scores) for model, scores in model_scores.items()}
+    # Sort models based on given sorting algo
+    models_in_order = (
+        sorted(qualified_models) if sort_models else list(qualified_models)
+    )
+    if verbose:
+        print("Qualified models:")
+        for model in sorted(qualified_models):
+            print(f"  {model}: {model_task_counts.get(model, 0)} tasks")
+    # Additional data to calc
+    extra_columns = extra_columns or {}
+    # The rows
     rows = []
-    for task in sorted(task_names):
-        row = {"task_name": task, "domains": task_to_domains[task]}
+    for task_name in sorted(task_names):
+        # Populate main 2
+        row = {"task_name": task_name, "domains": task_to_domains[task_name]}
+        # Additional ones
+        for col_name, col_data in extra_columns.items():
+            row[col_name] = col_data[task_name]
+        # Try to find non nan score
         non_nan_found = False
-        for model in qualified_models:
-            val = model_scores[model].get(task, np.nan)
-            if not np.isnan(val):
+        for model in models_in_order:
+            val = model_scores[model].get(task_name, np.nan)
+            if not pd.isna(val):
                 non_nan_found = True
             row[model] = val
-        if non_nan_found:
-            rows.append(row)
+        # Drop empty rows if so
+        if drop_empty_rows and not non_nan_found:
+            continue
+        # Append the rows
+        rows.append(row)
+    # Compute the dataframe
     df = pd.DataFrame(rows)
-    columns = ["task_name", "domains"] + qualified_models
-    return df[columns]
+    columns = ["task_name", "domains"] + list(extra_columns.keys()) + models_in_order
+    # Return dataframe
+    # Temporary dropna to ensure no bugs
+    return df[columns].dropna()
+
+
+def get_scores_dataframe(gm=get_models):
+    # English tasks
+    # With correct domains
+    # Extract ndcg
+    # Sort them
+    # And debug output
+    return _build_scores_df(
+        tasks=get_eng_tasks(domain_filter=True),
+        qualified_models=gm(),
+        score_extractor=_extract_ndcg_at_10,
+        sort_models=True,
+        verbose=True,
+    )
+
+
+def get_multilingual_scores_dataframe(gm=get_multilingual_models):
+    # multilingual models
+    # Extract ndcg
+    # And also store languages
+    tasks = get_multilingual_tasks()
+    task_to_langs = {
+        task.metadata.name: list(task.metadata.languages) for task in tasks
+    }
+    return _build_scores_df(
+        tasks=tasks,
+        qualified_models=gm(),
+        score_extractor=_extract_ndcg_at_10,
+        extra_columns={"languages": task_to_langs},
+    )
+
+
+def get_benchmark_dataframe(gm=get_models, multilingual=False):
+    # Get the tasks
+    tasks = (
+        get_multilingual_tasks() if multilingual else get_eng_tasks(domain_filter=True)
+    )
+    # Extract the source instad of ndcg
+    # And do not keep empty rows
+    return _build_scores_df(
+        tasks=tasks,
+        qualified_models=gm(),
+        score_extractor=_extract_source,
+        drop_empty_rows=True,
+    )
+
+
+# List of models by size
+def sort_models_by_size(models: list[str]) -> list[str]:
+    def sort_key(m):
+        size = MODEL_TO_PARAM_SIZE.get(m)
+        return (size is None, size or 0, m)
+
+    return sorted(models, key=sort_key)
+
+
+# Model sizes - read from hugging face
+MODEL_TO_PARAM_SIZE = {
+    "sentence-transformers__all-MiniLM-L6-v2": 23_000_000,
+    "BAAI__bge-small-en-v1.5": 33_000_000,
+    "ibm-granite__granite-embedding-small-english-r2": 48_000_000,
+    "sentence-transformers__all-mpnet-base-v2": 109_000_000,
+    "BAAI__bge-base-en-v1.5": 109_000_000,
+    "intfloat__multilingual-e5-small": 118_000_000,
+    "Alibaba-NLP__gte-base-en-v1.5": 137_000_000,
+    "ibm-granite__granite-embedding-english-r2": 149_000_000,
+    "jinaai__jina-embeddings-v5-text-nano": 212_000_000,
+    "sentence-transformers__paraphrase-multilingual-mpnet-base-v2": 278_000_000,
+    "Alibaba-NLP__gte-multilingual-base": 305_000_000,
+    "mixedbread-ai__mxbai-embed-large-v1": 335_000_000,
+    "BAAI__bge-large-en-v1.5": 335_000_000,
+    "WhereIsAI__UAE-Large-V1": 335_000_000,
+    "intfloat__multilingual-e5-large-instruct": 560_000_000,
+    "Snowflake__snowflake-arctic-embed-l-v2.0": 568_000_000,
+    "jinaai__jina-embeddings-v5-text-small": 596_000_000,
+}
+
+# Some debug stuff
+if __name__ == "__main__":
+    print(get_benchmark_dataframe(get_models).dropna())
+    print(get_scores_dataframe(get_models).dropna())
+    print(get_multilingual_scores_dataframe(get_multilingual_models).dropna())
+    print(get_benchmark_dataframe(get_multilingual_models, multilingual=True).dropna())

@@ -8,6 +8,8 @@ Done as a part of Master's Thesis at "University of Latvia".
 
 ## Required libraries
 
+See `/requirements.txt`.
+
 ## Structure
 
 - `/computed` directory contains the raw evaluations for the model x task pairs.
